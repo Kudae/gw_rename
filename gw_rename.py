@@ -14,18 +14,21 @@ import logging
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 #Global Variables
+global gwpath
 gwpath = '/tmp/gw_rename_project'
+global log
 log = f'{gwpath}/gw_rename_api.log'
+global cmasid
 cmasid = f'{gwpath}/gw_rename_sid.txt'
+global shell
 shell = '#!/bin/bash'
+global cpprofile
 cpprofile = 'source /etc/profile.d/CP.sh'
-dbeditfile = f'{gwpath}/gw_rename_{domain_name}.dbedit'
-dbeditapply = f'{gwpath}/gw_rename_{domain_name}_dbedit_apply.sh'
-mdsenv = f'mdsenv {cma_ip}'
-
 
 #help menu
 def helpmenu():
+
+    global debug
     if len(sys.argv) > 1 and sys.argv[1] == "-h": 
         print(
             '''
@@ -52,17 +55,19 @@ def helpmenu():
             \n[ Debug Mode Enabled ]\n
             '''
         ) 
-        debugmode = 1
+        debug = 1
     else: 
         print("\n[ Debug Mode Disabled ]\n")
-        debugmode = 0
+        debug = 0
     
-    return debugmode
+    return debug
     
 
 def askConfig():
 
     print("\n[ Provide Configuration ]\n")
+
+    global username, password, domain_name, cma_ip, api_ip, api_port
 
     username = input("Username: ")
     password = input("Password: ")
@@ -86,8 +91,6 @@ def askConfig():
     elif question == "y": 
         print("\nContinuing... \n")
 
-    return username, password, domain_name, cma_ip, api_ip, api_port
-
 
 # make code directory / clear log files 
 def gw_mkdir(gwpath):
@@ -109,7 +112,7 @@ def sleeptime(timeval):
 
 # take any input to pause debug 
 def pause_debug():
-    input("[ DEBUG ] Press any key to continue")    
+    input("[ DEBUG ] Press any key to continue...")    
 
 
 # capture api responses/information
@@ -130,19 +133,19 @@ def api_debug(defname, url, headers, body, result, api_post):
 
 
 # API Login
-def login(username, password, domain, url, cmasid): 
+def login(username, password, domain): 
 
     print("\n[ Login to API ]\n")
 
     defname = f"API : Login : {domain}"
     
-    gw_url = f'{url}/login'
+    api_url = f'{url}/login'
     headers = {'Content-Type' : 'application/json'}
     body = {'user' : f'{username}', 
             'password' : f'{password}',
             'domain' : f'{domain}'}
 
-    api_post = requests.post(gw_url, data = json.dumps(body), headers=headers, verify=False)
+    api_post = requests.post(api_url, data = json.dumps(body), headers=headers, verify=False)
     result = json.loads(api_post.text)
 
     response = api_post.status_code
@@ -153,7 +156,7 @@ def login(username, password, domain, url, cmasid):
 
 
     sleeptime(1)
-    api_debug(defname, url, headers, body, result, api_post)
+    api_debug(defname, api_url, headers, body, result, api_post)
 
     #write session id to OS for later use
     with open(cmasid, 'w') as f: 
@@ -163,18 +166,19 @@ def login(username, password, domain, url, cmasid):
 
 
 # API Publish
-def publish(url, domain, sid): 
+def publish(domain, sid): 
 
     print("\n[ Publish Changes ]\n")
 
     defname = f"API : Publish : {domain}"
 
-    gw_url = f'{url}/publish'
+    api_url = f'{url}/publish'
     x = sid["sid"]
     headers = {'Content-Type' : 'application/json',
                 'X-chkp-sid' : f'{x}'} 
     body = {}
-    api_post = requests.post(gw_url, data=json.dumps(body), headers=headers, verify=False)
+
+    api_post = requests.post(api_url, data=json.dumps(body), headers=headers, verify=False)
     result = api_post.json() 
 
     response = api_post.status_code
@@ -184,7 +188,7 @@ def publish(url, domain, sid):
         print(f'\t{response}... Publish Failed.\n')
 
     sleeptime(1)
-    api_debug(defname, gw_url, headers, body, result, api_post)
+    api_debug(defname, api_url, headers, body, result, api_post)
 
     if len(sys.argv) > 1 and sys.argv[1] == "-d":
         with open (f'{domain}_publish.json', 'a') as f:
@@ -192,18 +196,18 @@ def publish(url, domain, sid):
 
 
 # API Logout
-def logout(url, sid): 
+def logout(sid): 
 
     print("\n[ Log out of session ]\n")
 
     defname = f"API : Logout : {sid['sid']}"
 
-    gw_url = f'{url}/logout'
+    api_url = f'{url}/logout'
     x = sid["sid"]
     headers = {'Content-Type' : 'application/json',
                 'X-chkp-sid' : f'{x}'} 
     body = {}
-    api_post = requests.post(gw_url, data=json.dumps(body), headers=headers, verify=False)
+    api_post = requests.post(api_url, data=json.dumps(body), headers=headers, verify=False)
     result = api_post.json()
 
     response = api_post.status_code
@@ -214,7 +218,7 @@ def logout(url, sid):
 
 
     sleeptime(1)
-    api_debug(defname, gw_url, headers, body, result, api_post)
+    api_debug(defname, api_url, headers, body, result, api_post)
 
 # create scripts to run on mds
 def bash_script(cmd, script, runfile):
@@ -227,6 +231,11 @@ def bash_script(cmd, script, runfile):
     {cmd}\r 
     """
     script = f'{script}'
+    if debug == 1:
+        print(f'contents:\n{mdsbash}')
+        print(f'script:\n{script}')
+        pause_debug()
+
     with open(script, 'w') as f: 
         f.write(mdsbash)
 
@@ -241,29 +250,32 @@ def bash_script(cmd, script, runfile):
         return vallist
 
 
-def gw_info(domain, ip, debug): 
+def gw_info(): 
 
     print("\n[ List GW and SIC Names / Convert Lists ]\n")
 
      # (oldmemlist) cluster member names list on CMA
+    global oldmemlist
     memcmd = """cpmiquerybin attr "" network_objects "(class='cluster_member')" -a __name__"""
-    memscript = f'{gwpath}/gw_rename_oldmemlist.txt'
-    oldmemlist = bash_script(memcmd, memscript, 0).split()
+    memscript = f'{gwpath}/gw_rename_oldmemlist.sh'
+    oldmemlist = bash_script(memcmd, memscript, 1).split()
     
     # (cmiplist) cluster member IP addresses list on CMA
+    global cmiplist
     cmiplist = []
     for cmname in oldmemlist:
         cmcmd = f"""cpmiquerybin attr "" network_objects "(name='{cmname}')" -a ipaddr | tr -d '[:space:]'"""
-        cmscript = f'{gwpath}/gw_rename_cmiplist.txt'
-        cmiplistnew = bash_script(cmcmd, cmscript, 0)
+        cmscript = f'{gwpath}/gw_rename_cmiplist.sh'
+        cmiplistnew = bash_script(cmcmd, cmscript, 1)
         cmiplist.append(cmiplistnew)
 
     # get SIC name of each cluster member
+    global oldsiclist
     oldsiclist = []
     for sic in oldmemlist: 
         siccmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
-        sicscript = f'{gwpath}/gw_rename_oldsiclist.txt'
-        oldsiclistnew = bash_script(siccmd, sicscript, 0)
+        sicscript = f'{gwpath}/gw_rename_oldsiclist.sh'
+        oldsiclistnew = bash_script(siccmd, sicscript, 1)
         oldsiclist.append(oldsiclistnew)
 
     # debug 
@@ -272,11 +284,9 @@ def gw_info(domain, ip, debug):
         print(f"Cluster Member IP List: {cmiplist}\n")
         print(f"Old SIC List\n{oldsiclist}\n")
         pause_debug()
-    
-    return cmiplist, oldmemlist, oldsiclist
 
 
-def dbeditcreate(domain, debug):
+def dbeditcreate(domain):
 
     # (newmemlist) Ask user for new name of each cluster member 
     newmemlist = []
@@ -324,7 +334,7 @@ def dbeditcreate(domain, debug):
     return newmemlist, newsiclist
 
 
-def gw_sic_reset(oldnamelist, newnamelist, iplist, debug):
+def gw_sic_reset(oldnamelist, newnamelist, iplist):
 
     print("\n[ Reset SIC on Gateway Side ]\n")
 
@@ -368,7 +378,7 @@ def gw_sic_reset(oldnamelist, newnamelist, iplist, debug):
             print(commands)
 
 
-def dbedit_apply(cmaip, debug): 
+def dbedit_apply(): 
 
     print("\n[ Apply dbedit configuration to CMA ]\n")
 
@@ -397,7 +407,7 @@ def dbedit_apply(cmaip, debug):
         pause_debug()
 
 
-def api_sic(cmaip, newnamelist, sid, debug): 
+def api_sic(newnamelist, sid): 
 
     print("\n[ Establish SIC on API and update member names ]\n")
 
@@ -412,7 +422,7 @@ def api_sic(cmaip, newnamelist, sid, debug):
 
     esic = f'{gwpath}/gw_rename_establishsic.sh'
 
-    command1 = f"""mgmt_cli -s {gwsid} \ \n"""
+    command1 = f"""mgmt_cli -s {cmasid} \ \n"""
     command2 = f"""set simple-cluster name "{clulist[0]}" ignore-warnings "true" \ \n"""
     
     with open(esic, 'a') as f:
@@ -440,36 +450,41 @@ def api_sic(cmaip, newnamelist, sid, debug):
 
 def main(): 
 
-    debugmode = helpmenu()
+    helpmenu()
 
-    username, password, domain_name, cma_ip, api_ip, api_port = askConfig()
+    askConfig()
 
     #global url variable, import local config file
+    global url
     url = f'https://{api_ip}:{api_port}/web_api'
     print(f"\n[ Global URL Variable]\n{url}\n")
-
+    global dbeditfile
+    dbeditfile = f'{gwpath}/gw_rename_{domain_name}.dbedit'
+    global dbeditapply
+    dbeditapply = f'{gwpath}/gw_rename_{domain_name}_dbedit_apply.sh'
+    global mdsenv
+    mdsenv = f'mdsenv {cma_ip}'
     
-
     # create new log directory, delete old log files
     gw_mkdir(gwpath)
 
     #login to domain 
-    sid = login(username, password, domain_name, url)
+    sid = login(username, password, domain_name, url, cmasid)
 
     # get list of CMA's and CMA IP's from system 
-    cmiplist, oldmemlist, oldsiclist = gw_info(domain_name, cma_ip, debugmode)
+    gw_info()
 
     # create dbedit file
-    newmemlist, newsiclist = dbeditcreate(domain, debugmode)
+    newmemlist, newsiclist = dbeditcreate(domain_name)
     
     # create bash file and send to gateways to reset sic 
-    gw_sic_reset(oldmemlist, newmemlist, cmiplist, debugmode)
+    gw_sic_reset(oldmemlist, newmemlist, cmiplist)
 
     # apply dbedit change 
-    dbedit_apply(cma_ip, debugmode)
+    dbedit_apply()
 
     # apply api changes to establish sic
-    api_sic(cma_ip, newmemlist, debugmode)
+    api_sic(cma_ip, newmemlist)
 
     # publish changes 
     publish(url, domain_name, sid)
