@@ -1,6 +1,6 @@
 import os
 from os import path
-from signal import pause
+from socket import timeout
 import sys
 import requests
 from requests import api 
@@ -15,16 +15,27 @@ import logging
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 #Global Variables
-global gwpath
-gwpath = '/tmp/gw_rename_project'
-global log
-log = f'{gwpath}/gw_rename_api.log'
-global cmasid
-cmasid = f'{gwpath}/gw_rename_sid.txt'
 global shell
 shell = '#!/bin/bash'
 global cpprofile
 cpprofile = 'source /etc/profile.d/CP.sh'
+
+global gwpath
+gwpath = '/tmp/gw_rename_project'
+
+global log
+log = f'{gwpath}/gw_rename_api.log'
+global cmasid
+cmasid = f'{gwpath}/gw_rename_sid.txt'
+global cmatmp
+cmatmp = f'{gwpath}/gw_rename_tmprun.sh'
+global clulist
+clulist = f'{gwpath}/gw_rename_clulist.txt'
+global clurename
+clurename = f'{gwpath}/gw_rename_clurename.sh'
+global esic
+esic = f'{gwpath}/gw_rename_establishsic.sh'
+
 
 #help menu
 def helpmenu():
@@ -58,34 +69,41 @@ def helpmenu():
         debug = 0
     
     return debug
-    
+
+
+def question(stuff):
+    while True:
+        answer = input(f"\n{stuff}: ")
+        if len(answer) is not 0:
+            False
+            return answer 
+
 
 def askConfig():
 
-    print("\n[ Provide Configuration ]\n")
+    print("\n[ Provide API/CMA/Domain Configuration ]\n")
 
     global username, password, domain_name, cma_ip, api_ip, api_port
 
-    username = input("Username: ")
-    password = input("Password: ")
-    domain_name = input("Domain Name (in SmartConsole): ")
-    cma_ip = input("Primary CMA IP: ")
-    api_ip = input("API (MDM) IP Address: ")
-    api_port = input("API Port: ")
+    username = question('Username')
+    password = question("Password")
+    api_ip = question("API (MDM) IP Address")
+    api_port = question("API Port")
+    domain_name = question("Domain Name (in SmartConsole)")
+    cma_ip = question("Primary CMA IP")
 
-    formatanswer = f"""
-                        username = {username}
-                        password = {password}
-                        Domain Name = {domain_name}
-                        CMA IP = {cma_ip}
-                        API IP = {api_ip}
-                        API Port = {api_port}
-                        """  
+    formatanswer = f"""username = {username}
+password = {password}
+API IP = {api_ip}
+API Port = {api_port}
+Domain Name = {domain_name}
+CMA IP = {cma_ip}
+"""  
 
-    question = input(f"\n{formatanswer}\nIs this information correct? (y/n) ")   
-    if question == "n":
+    result = question(f"\n{formatanswer}\nIs this information correct? (y/n)")   
+    if result == "n":
         askConfig()
-    elif question == "y": 
+    elif result == "y": 
         print("\nContinuing... \n")
 
 
@@ -107,26 +125,30 @@ def gw_mkdir():
 def sleeptime(timeval): 
     time.sleep(timeval)
 
+
 # take any input to pause debug 
 def pause_debug():
-    input("[ DEBUG ] Press any key to continue...\n\n")    
+    input("[ DEBUG ] Press any key to continue...\n\n")   
+
+
+def pause_script():
+    input("\n\n--- Check and Verify. Press any key to continue ---") 
 
 
 # capture api responses/information
-def api_debug(defname, url, headers, body, result, api_post): 
+def api_debug(defname, apiurl, headers, body, result, api_post): 
 
-    if len(sys.argv) > 1 and sys.argv[1] == "-d":
-        apiBugs = [
-        f"\n\n[ {defname} ]\n",
-        f"{defname} : URL : {url} \n",
-        f"{defname} : Headers : {headers} \n",
-        f"{defname} : Body : {body} \n",
-        f"{defname} : JSON RESPONSE : \n{result}\n",
-        f"{defname} : Status Code: {api_post.status_code}\n",
-        ]
-        f = open(log, "a")
+    apiBugs = [
+    f"\n\n[ {defname} ]\n",
+    f"{defname} : URL : {apiurl} \n",
+    f"{defname} : Headers : {headers} \n",
+    f"{defname} : Body : {body} \n",
+    f"{defname} : JSON RESPONSE : \n{result}\n",
+    f"{defname} : Status Code: {api_post.status_code}\n"
+    ]
+
+    with open(log, 'a') as f:
         f.writelines(apiBugs)
-        f.close()
 
 
 # API Login
@@ -145,18 +167,16 @@ def login(domain):
     api_post = requests.post(api_url, data = json.dumps(body), headers=headers, verify=False)
     result = json.loads(api_post.text)
 
+    sleeptime(1)
+    api_debug(defname, api_url, headers, body, result, api_post)
+
     response = api_post.status_code
     if response == 200: 
         print(f'{response}... Log in Successful.\n')
     else: 
         print(f'{response}... Login Failed.\n')
 
-
-    sleeptime(1)
-    api_debug(defname, api_url, headers, body, result, api_post)
-
     #write session id to OS for later use
-    cmatmp = f'{gwpath}/gw_rename_cmatmp.sh'
     cmacmd = f'mgmt_cli login -r true -d {domain} > {cmasid}'
     bash_script(cmacmd, cmatmp)
 
@@ -179,18 +199,14 @@ def publish(domain, sid):
     api_post = requests.post(api_url, data=json.dumps(body), headers=headers, verify=False)
     result = api_post.json() 
 
+    sleeptime(1)
+    api_debug(defname, api_url, headers, body, result, api_post)
+
     response = api_post.status_code
     if response == 200: 
         print(f'{response}... Publish Successful.\n')
     else: 
         print(f'{response}... Publish Failed.\n')
-
-    sleeptime(1)
-    api_debug(defname, api_url, headers, body, result, api_post)
-
-    if len(sys.argv) > 1 and sys.argv[1] == "-d":
-        with open (f'{domain}_publish.json', 'a') as f:
-         f.write(json.dumps(result))
 
 
 # API Logout
@@ -208,15 +224,15 @@ def logout(sid):
     api_post = requests.post(api_url, data=json.dumps(body), headers=headers, verify=False)
     result = api_post.json()
 
+    sleeptime(1)
+    api_debug(defname, api_url, headers, body, result, api_post)
+
     response = api_post.status_code
     if response == 200: 
         print(f'{response}... Logged out\n')
     else: 
-        print(f'{response}... Login failed\n')
+        print(f'{response}... Logout failed\n')
 
-
-    sleeptime(1)
-    api_debug(defname, api_url, headers, body, result, api_post)
 
 # create scripts to run on mds
 def bash_script(cmd, script):
@@ -229,7 +245,7 @@ def bash_script(cmd, script):
 """
     newscript = f'{script}'
 
-    if debug ==1:
+    if debug == 1:
         print(f'[ contents ]\n{mdsbash}\n')
         print(f'[ script]\n{newscript}\n')
         print('[[ Does everything look right? ]]\n')
@@ -243,7 +259,8 @@ def bash_script(cmd, script):
     
     vallist = subprocess.check_output(runcmd, shell=True, text=True)
 
-    print(f"[ RESULT ]\n{newscript}: {vallist}\n\n")
+    if debug == 1:
+        print(f"[ RESULT ]\n{newscript}: {vallist}\n\n")
 
     return vallist
 
@@ -252,91 +269,188 @@ def gw_info():
 
     print("\n[ List GW and SIC Names / Convert Lists ]\n")
 
-     # (oldmemlist) cluster member names list on CMA
-    global oldmemlist
-    memcmd = """cpmiquerybin attr "" network_objects "(class='cluster_member')" -a __name__"""
-    memscript = f'{gwpath}/gw_rename_oldmemlist.sh'
-    oldmemlist = bash_script(memcmd, memscript).split()
+    global oldclulist, oldmemlist, oldsiclist, cmiplist, oldgwlist, oldgwsiclist, gwiplist
+
+    ### GATEWAY LISTS ###
+
+    # gateway name list 
+    cmd = f"""cpmiquerybin attr "" network_objects "(class='gateway_ckp')" -a __name__"""
+    script = f'{gwpath}/gw_rename_oldgwlist.sh'
+    oldgwlist = bash_script(cmd, script).split()
+
+    # gateway IP address list 
+    gwiplist = []
+    for gw in oldgwlist:
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{gw}')" -a ipaddr | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_gwiplist.sh'
+        gwiplistnew = bash_script(cmd, script)
+        gwiplist.append(gwiplistnew)
+
+    # gateway sic list 
+    oldgwsiclist = []
+    for sic in oldgwlist:
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_oldgwsiclist.sh'
+        oldgwsiclistnew = bash_script(cmd, script)
+        oldgwsiclist.append(oldgwsiclistnew)
+
+    print(f"OLD GW  List\n{oldgwlist}\n")
+    print(f"OLD SIC List\n{oldgwsiclist}\n")
+    print(f"Cluster Member IP List\n{gwiplist}\n")
+    pause_script()
+
     
-    # (cmiplist) cluster member IP addresses list on CMA
-    global cmiplist
+    ### CLUSTER MEMBER LISTS ###
+
+     # cluster member name list
+    cmd = """cpmiquerybin attr "" network_objects "(class='cluster_member')" -a __name__"""
+    script = f'{gwpath}/gw_rename_oldmemlist.sh'
+    oldmemlist = bash_script(cmd, script).split()
+    
+    # cluster member IP address list
     cmiplist = []
-    for cmname in oldmemlist:
-        cmcmd = f"""cpmiquerybin attr "" network_objects "(name='{cmname}')" -a ipaddr | tr -d '[:space:]'"""
-        cmscript = f'{gwpath}/gw_rename_cmiplist.sh'
-        cmiplistnew = bash_script(cmcmd, cmscript)
+    for cm in oldmemlist:
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{cm}')" -a ipaddr | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_cmiplist.sh'
+        cmiplistnew = bash_script(cmd, script)
         cmiplist.append(cmiplistnew)
 
-    # get SIC name of each cluster member
-    global oldsiclist
+    # SIC name of each cluster member
     oldsiclist = []
     for sic in oldmemlist: 
-        siccmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
-        sicscript = f'{gwpath}/gw_rename_oldsiclist.sh'
-        oldsiclistnew = bash_script(siccmd, sicscript)
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_oldsiclist.sh'
+        oldsiclistnew = bash_script(cmd, script)
         oldsiclist.append(oldsiclistnew)
 
-    # debug 
-    if debug == 1: 
-        print(f"Old Cluster Members List\n{oldmemlist}\n")
-        print(f"Cluster Member IP List: {cmiplist}\n")
-        print(f"Old SIC List\n{oldsiclist}\n")
-        pause_debug()
+    # old cluster list
+    commands = """cpmiquerybin attr "" network_objects "(class='gateway_cluster')" -a __name__"""
+    oldclulist = bash_script(commands, clulist).split()
+
+    # verify with user 
+    print(f"OLD Cluster Members List\n{oldmemlist}\n")
+    print(f"OLD SIC List\n{oldsiclist}\n")
+    print(f'OLD CLU List\n{oldclulist}\n')
+    print(f"Cluster Member IP List\n{cmiplist}\n")
+    pause_script()
 
 
 def dbeditcreate():
 
-    # (newmemlist) Ask user for new name of each cluster member 
-    global newmemlist
+    print('\n[ Dbedit File Create ]\n')
+
+    global newmemlist, newsiclist, newgwlist, newgwsiclist, newclulist
+
+    # Ask user for new name of each gateway 
+    # def entry_list(x,y,z): 
+    #     for i in x:
+    #         a = question(y)
+    #         z.append(a)
+
+    # newgwlist = []
+    # q = f"Enter new name for gateway {i}"
+    # entry_list(oldgwlist, newgwlist, q)
+
+    newgwlist = [] 
+    for gw in oldgwlist:
+        newgw = question(f"Enter new name for gateway {gw}")
+        newgwlist.append(newgw)
+
+    # Make new sic entries 
+    newgwsiclist = [] 
+    for x,y in zip(oldgwsiclist, oldgwlist):
+        for z in newgwlist:
+            if y in x and not any(z in s for s in newgwsiclist):
+                newgwsiclist.append(x.replace(y, z))
+
+    print(f"NEW -- Gateway List\n{newgwlist}\n")
+    print(f"NEW -- Gateway SIC List\n{newgwsiclist}\n")
+    pause_script()
+
+
+    newclulist = []
+    for x in oldclulist:
+        result = question(f"Enter new cluster object name {x}")
+        newclulist.append(result)
+
+    # Ask user for new name of each cluster member 
     newmemlist = []
     for mem in oldmemlist:
-        newmem = input(f"Type new name for {mem}: ")
+        newmem = question(f"Enter new name for cluster member {mem}")
         newmemlist.append(newmem)
 
-    global newsiclist
+    # Make new sic entries 
     newsiclist = []
     for x,y in zip(oldsiclist, oldmemlist):
         for z in newmemlist:
             if y in x and not any(z in s for s in newsiclist):
                 newsiclist.append(x.replace(y, z))
 
-    # debug
-    if debug == 1: 
-        print(f"New Cluster Member List\n{newmemlist}\n")
-        print(f"New SIC List\n{newsiclist}\n")
-        pause_debug()
+    print(f"NEW -- Cluster Member List\n{newmemlist}\n")
+    print(f"NEW -- SIC List\n{newsiclist}\n")
+    pause_script()
 
 
-    #Open .dbedit file and write changes. 
-    # Make sic changes to old newtork objects
-    with open(dbeditfile, 'a') as f:
-        for x,y in zip(oldmemlist,newsiclist): 
-            output = f"""modify network_objects {x} sic_name "{y}"\n"""
-            f.write(output)
+    ### Make dbedit file ###
 
-    # Update old network object name with new name 
-    with open(dbeditfile, 'a') as f:
-        for x,y in zip(oldmemlist,newmemlist): 
-            output = f"""rename network_objects {x} {y}\n"""
-            f.write(output)
+    # Modify SIC entries 
+    def mod_sic(a, b):
+        with open(dbeditfile, 'a') as f:
+            for x,y in zip(a, b):
+                output = f"""modify network_objects {x} sic_name "{y}"\n"""
+                f.write(output)
 
-    with open(dbeditfile, 'a') as f: 
-        output = "quit -update_all"
-        f.write(output)
+    
+    mod_sic(oldgwlist, newgwsiclist)
+    mod_sic(oldmemlist, newsiclist)
 
-    # debug 
-    if debug == 1: 
-        print("\n[Compiled dbedit file]\n")
-        os.system(f"cat {dbeditfile}")
-        pause_debug()
+    # Modify network object names
+    def mod_net(a, b):
+        with open(dbeditfile, 'a') as f:
+            for x,y in zip(a,b): 
+                output = f"""rename network_objects {x} {y}\n"""
+                f.write(output)
 
+    mod_net(oldgwlist, newgwlist)
+    mod_net(oldmemlist, newmemlist)
 
+    # Verify changes with user
+    print("\n[ Compiled dbedit file ]\n")
+    os.system(f"cat {dbeditfile}")
+    pause_script()
+
+# reset sic on gateway side
 def gw_sic_reset():
 
     print("\n[ Reset SIC on Gateway Side ]\n")
 
-    for member,newmem in zip(oldmemlist,newmemlist): 
-        sicreset = f'{gwpath}/gw_rename_{member}_sic_reset.sh'
+    for gw,newgw in zip(oldgwlist,newgwlist): 
+        sicreset = f'{gwpath}/gw_rename_{gw}_sic_reset.sh'
+        with open(sicreset, 'w') as f: 
+                bashfile = f"""#!/bin/bash
+. /etc/profile.d/CP.sh
+
+clish -sc "set hostname {newgw}"
+cp_conf sic init vpn123 norestart
+cpwd_admin stop -name CPD -path "$CPDIR/bin/cpd_admin" -command "cpd_admin stop" >/home/admin/cpdstop
+cpwd_admin start -name CPD -path "$CPDIR/bin/cpd" -command "cpd" > /home/admin/cpdstart
+
+FAIL="$(cat /home/admin/cpdstart | grep "CPD is alive")"
+SUCCESS="$(cat /home/admin/cpdstart | grep "Process CPD started successfully")"
+if [ -n "$SUCCESS" ]
+then
+    echo "SUCCESS"
+else
+    if [ -n "$FAIL" ]
+    then
+        echo "FAILURE"
+    fi
+fi"""
+                f.write(bashfile)
+
+
+    for mem,newmem in zip(oldmemlist,newmemlist): 
+        sicreset = f'{gwpath}/gw_rename_{mem}_sic_reset.sh'
         with open(sicreset, 'w') as f: 
                 bashfile = f"""#!/bin/bash
 . /etc/profile.d/CP.sh
@@ -359,9 +473,16 @@ else
 fi"""
                 f.write(bashfile)           
 
-    
     # send bash file to gateway and execute sic reset
-    
+    for gw,ip in zip(oldgwlist,gwiplist):
+        sendsic = f'{gwpath}/gw_rename_{gw}_send_sic.sh'
+        commands = f"""cprid_util -debug -server {ip} -verbose putfile -local_file "{gwpath}/gw_rename_{gw}_sic_reset.sh" -remote_file "/home/admin/{gw}_sic_reset.sh" -perms 700
+cprid_util -debug -server {ip} -verbose rexec -rcmd /home/admin/{gw}_sic_reset.sh
+"""
+        bash_script(commands, sendsic)
+
+        if debug == 1:
+            print(commands)
 
     for member,ip in zip(oldmemlist,cmiplist):
         sendsic = f'{gwpath}/gw_rename_{member}_send_sic.sh'
@@ -379,71 +500,98 @@ def dbedit_apply():
     print("\n[ Apply dbedit configuration to CMA ]\n")
 
     commands= f"""dbedit -local -f {dbeditfile}"""
-
-    if debug == 1:
-        with open(dbeditfile, 'r') as f:
-            f.read()
-        pause_debug()
-
     bash_script(commands, dbeditapply)
+    
+    # new gateway name list 
+    cmd = f"""cpmiquerybin attr "" network_objects "(class='gateway_ckp')" -a __name__"""
+    script = f'{gwpath}/gw_rename_oldgwlist.sh'
+    new_oldgwlist = bash_script(cmd, script).split()
 
-    if debug == 1: 
-        print("[ New Configuration Hostname / SIC ]")
+    # new gateway sic list 
+    new_oldgwsiclist = []
+    for sic in new_oldgwlist:
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_oldgwsiclist.sh'
+        oldgwsiclistnew = bash_script(cmd, script)
+        new_oldgwsiclist.append(oldgwsiclistnew)
 
-        new_memcmd = """cpmiquerybin attr "" network_objects "(class='cluster_member')" -a __name__"""
-        new_memscript = f'{gwpath}/gw_rename_newmemlist_2.txt'
-        new_oldmemlist = bash_script(new_memcmd, new_memscript).split()
+    print("\n[ CURRENT GATEWAY CONFIGURATION / SIC ]\n")
+    print(f"\nNEW Cluster Members List\n{new_oldgwlist}\n")
+    print(f"\nNEW SIC List\n{new_oldgwsiclist}\n")
+    pause_script()
 
-        new_oldsiclist = []
-        for sic in new_oldmemlist: 
-            new_siccmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
-            new_sicscript = f'{gwpath}/gw_rename_newsiclist_2.txt'
-            new_oldsiclistnew = bash_script(new_siccmd, new_sicscript)
-            new_oldsiclist.append(new_oldsiclistnew)
 
-        print(f"NEW Cluster Members List\n{new_oldmemlist}\n")
-        print(f"NEW SIC List\n{new_oldsiclist}\n")
-        pause_debug()
+    #new cluster member name list
+    cmd = """cpmiquerybin attr "" network_objects "(class='cluster_member')" -a __name__"""
+    script = f'{gwpath}/gw_rename_newmemlist_2.txt'
+    new_oldmemlist = bash_script(cmd, script).split()
+
+    new_oldsiclist = []
+    for sic in new_oldmemlist: 
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_newsiclist_2.txt'
+        oldsiclistnewnew = bash_script(cmd, script)
+        new_oldsiclist.append(oldsiclistnewnew)
+
+    print("\n[ CURRENT CLUSTER CONFIGURATION / SIC ]\n")
+    print(f"\nNEW Cluster Members List\n{new_oldmemlist}\n")
+    print(f"\nNEW SIC List\n{new_oldsiclist}\n")
+    pause_script()
 
 
 def api_sic(): 
 
     print("\n[ Establish SIC on API and update member names ]\n")
 
-    clulist = f'{gwpath}/gw_rename_clulist.txt'
-
-    commands = """cpmiquerybin attr "" network_objects "(class='gateway_cluster')" -a __name__"""
-    clulistnew = bash_script(commands, clulist).split()
-
-    if debug == 1: 
-        print(f'[ clulist ]\n{clulistnew}')
-        pause_debug()
-
-    newclulist = input("\nPlease enter new name for Cluster Object: ")
-
-    esic = f'{gwpath}/gw_rename_establishsic.sh'
-
     
+
+    # Update gateway name...
+    for x,y in zip(oldgwlist, newgwlist):
+        print(f"...Updating gateway name {x} to {y}\n")
+        command = f"""mgmt_cli -s {cmasid} set simple-gateway name "{x}" ignore-warnings "true" new-name "{y}" one-time-password "vpn123" """
+
+    publishsid = f'mgmt_cli publish -s {cmasid}'
+    publishfile = f'{gwpath}/gw_rename_publishfile.sh'
+    bash_script(publishsid, publishfile)
     
+    #Update cluster object name...
+    for x,y in zip(oldclulist, newclulist): 
+        print(f"...Updating cluster object name {x} to {y}\n")
+        command = f"""mgmt_cli -s {cmasid} set simple-cluster name "{x}" new-name "{y}" ignore-warnings "true" """
+        bash_script(command, clurename)
+
+    publishsid = f'mgmt_cli publish -s {cmasid}'
+    publishfile = f'{gwpath}/gw_rename_publishfile.sh'
+    bash_script(publishsid, publishfile)
+
+
+    #update cluster member names 
+    print("\n...Update Cluster Member Names and establish SIC ")
+
+    command = f"""mgmt_cli -s {cmasid} set simple-cluster name "{newclulist[0]}" ignore-warnings "true" """
+
     for i,item in enumerate(newmemlist):
-        command = f"""mgmt_cli -s {cmasid} \ 
-set simple-cluster name "{clulistnew[0]}" ignore-warnings "true" \ \n"""
-        command1 = f"""
-members.update.{i}.name "{item}" \ 
-members.update.{i}.one-time-password "vpn123" \ 
-"""
-        command = command + command1 + '\n'
- 
-        # if debug == 1:
-        print(f'api_sic command:\n{command}')
-        pause_debug()
+        print(f'FOR LOOP: {i}\n{item}\n{newmemlist}\n')
+        command1 = f"""members.update.{i}.name "{item}" members.update.{i}.one-time-password "vpn123" """
+        print(f'command1: {command1}\n')
+        command = command + command1
 
-    bash_script(command, clulist)
+    print(f'api_sic command:\n{command}')
+    pause_script()
 
-    publish(domain_name, sid)
+    bash_script(command, esic)
+    timeout(1)
 
-    #Update cluster member name...
-    
+
+def end():
+        logging.error(traceback.format_exec())
+        print("[Logging user out]\n")
+        logout(sid)
+        command = f'mgmt_cli logout -s {cmasid}'
+        script = f'{gwpath}/gw_rename_logout.sh'
+        bash_script(command, script)
+        sys.exit(0)
+
 
 def main(): 
 
@@ -469,7 +617,7 @@ def main():
     global sid
     sid = login(domain_name)
 
-    # get list of CMA's and CMA IP's from system 
+    # Create lists of cluster members, objects, and standard gateways 
     gw_info()
 
     # create dbedit file
@@ -485,17 +633,11 @@ def main():
     api_sic()
 
 
+
 if __name__=="__main__":
     try:
         main()
     except Exception as e:
-        logging.error(traceback.format_exec())
-        print("[Logging user out]\n")
-        logout(sid)
-        sys.exit(0)
-        os._exit(0)
+        end()
     finally:
-        print("[Logging user out]\n")
-        logout(sid)
-        sys.exit(0)
-        os._exit(0)
+        end()
