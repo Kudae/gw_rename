@@ -279,6 +279,7 @@ def cluster_member_link(cluster):
     members(cluster, domain_name, domain_sid)
     for m in memberlist:
         linkedlist.setdefault(cluster, []).append(m)
+
     print(f"\n[ Linked List ]\n{linkedlist}\n")
 
 
@@ -342,8 +343,7 @@ def bash_script(cmd, script):
     
     vallist = subprocess.check_output(runcmd, shell=True, text=True)
 
-    if debug == 1:
-        print(f"[ RESULT ]\n{newscript}: {vallist}\n\n")
+    print(f"[ RESULT ]\n{vallist}\n\n")
 
     return vallist
 
@@ -410,7 +410,104 @@ def api_sic_cluster(oldname, newname, members):
 
     bash_script(cmd, filename)
     publish(domain_name, domain_sid)
+
+
+
+
+def dbeditcreate(name):
+
+    print('\n[ Dbedit File Create ]\n')
+
+    # get the result of sic name from dbedit
+    cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+    script = f'{gwpath}/gw_rename_sic_name_{sic}.sh'
+    oldgwsiclistnew = bash_script(cmd, script)
+    oldgwsiclist.append(oldgwsiclistnew)
+
+    # Make new sic entries 
+    newgwsiclist = [] 
+    for x,y in zip(oldgwsiclist, oldgwlist):
+        for z in newgwlist:
+            if y in x and not any(z in s for s in newgwsiclist):
+                newgwsiclist.append(x.replace(y, z))
+
+    print(f"NEW -- Gateway List\n{newgwlist}\n")
+    print(f"NEW -- Gateway SIC List\n{newgwsiclist}\n")
+    pause_script()
+
+
+    newclulist = []
+    for x in oldclulist:
+        result = question(f"Enter new cluster object name {x}")
+        newclulist.append(result)
+
+    # Ask user for new name of each cluster member 
+    newmemlist = []
+    for mem in oldmemlist:
+        newmem = question(f"Enter new name for cluster member {mem}")
+        newmemlist.append(newmem)
+
+    # Make new sic entries 
+    newsiclist = []
+    for x,y in zip(oldsiclist, oldmemlist):
+        for z in newmemlist:
+            if y in x and not any(z in s for s in newsiclist):
+                newsiclist.append(x.replace(y, z))
+
+
+### Make dbedit file ###
+# Modify SIC entries 
+def mod_sic(a, b):
+    with open(dbeditfile, 'a') as f:
+        for x,y in zip(a, b):
+            output = f"""modify network_objects {x} sic_name "{y}"\n"""
+            f.write(output)
+
+# Modify network object names
+def mod_net(a, b):
+    with open(dbeditfile, 'a') as f:
+        for x,y in zip(a,b): 
+            output = f"""rename network_objects {x} {y}\n"""
+            f.write(output)
+
+#add gateway dbedit config
+
+
+
+def dbedit_apply(): 
+
+    print("\n[ Apply dbedit configuration to CMA ]\n")
+
+    dbeditfile = f'{gwpath}/gw_rename_dbedit.dbedit'
+    commands= f"""dbedit -local -f {dbeditfile}"""
+    bash_script(commands, dbeditapply)
     
+    # new gateway name list 
+    cmd = f"""cpmiquerybin attr "" network_objects "(class='gateway_ckp')" -a __name__"""
+    script = f'{gwpath}/gw_rename_oldgwlist.sh'
+    new_oldgwlist = bash_script(cmd, script).split()
+
+    # new gateway sic list 
+    new_oldgwsiclist = []
+    for sic in new_oldgwlist:
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_oldgwsiclist.sh'
+        oldgwsiclistnew = bash_script(cmd, script)
+        new_oldgwsiclist.append(oldgwsiclistnew)
+
+    #new cluster member name list
+    cmd = """cpmiquerybin attr "" network_objects "(class='cluster_member')" -a __name__"""
+    script = f'{gwpath}/gw_rename_newmemlist_2.txt'
+    new_oldmemlist = bash_script(cmd, script).split()
+
+    new_oldsiclist = []
+    for sic in new_oldmemlist: 
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{sic}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_newsiclist_2.txt'
+        oldsiclistnewnew = bash_script(cmd, script)
+        new_oldsiclist.append(oldsiclistnewnew)
+
+
     
 ###Gateway Class Object###
 #Need to get rid of list iteration
@@ -419,6 +516,8 @@ class Gateway:
         self.name = name 
         self.ipadd = ''
         self.newname = ''
+        self.oldsic = ''
+        self.newsic = ''
 
     # Store IP Address from API
     def gw_ip(self):
@@ -426,11 +525,26 @@ class Gateway:
         result = info('gateway', self.name, domain_sid)
         self.ipadd = result['ipv4-address']
         
-    # Store new name of gateway
-    def gw_newname(self):
-        answer = question(f"Enter new name for gateway: {self.name}")
-        self.newname = answer
+    def gw_oldsic(self):
+        cmd = f"""cpmiquerybin attr "" network_objects "(name='{self.name}')" -a sic_name | tr -d '[:space:]'"""
+        script = f'{gwpath}/gw_rename_sic_name_{self.name}.sh'
+        self.oldsic = bash_script(cmd, script)
 
+    # new name of gateway
+    def gw_newname(self):
+        answer = question(f"Enter new name for gateway {self.name}")
+        self.newname = answer
+    
+    # create new sic name
+    def gw_newsic(self):
+        self.newsic = self.oldsic.replace(self.newname)
+
+    # add gateway dbedit config 
+    def gw_dbedit(self):
+        mod_sic(self.name, self.newsic)
+        mod_net(self.name, self.newname)
+
+    
     # Reset SIC on gateway side 
     def gw_sicreset(self):
         sic_reset(self.name, self.newname, self.ipadd)
@@ -443,13 +557,14 @@ class Gateway:
 class Cluster:
     def __init__(self, name):
         self.name = name
-        self.cmip = 0
-        self.newname = 0
-        self.newmem = 0
+        self.cmip = ''
+        self.newname = ''
+        self.newmem = ''
+        self.newsic = ''
 
+    # New name of cluster object
     def cl_newname(self):
         self.newname = question(f"Enter new name for cluster{self.name}")
-        return self.newname
 
     # New names for cluster members
     def cm_newmame(self):
@@ -457,7 +572,6 @@ class Cluster:
         for mem in memberlist:
             answer = question(f"Enter new name for cluster member {mem}")
             self.newmem.append(answer)
-        return self.newmem
 
     # From api result, get IP address list of cluster members
     def cm_ip(self):
@@ -465,16 +579,19 @@ class Cluster:
         result = info(self.name, 'cluster', domain_sid)
         for mem in result['cluster-members']:
             self.ipadd.append(mem['ip-address'])
-        return self.ipadd
+
+    #add cluster member dbedit config
+    mod_sic(self.mem, self.newsic)
+    mod_net(self.mem, self.newmem)
 
     # Reset SIC on gateway side 
-    def sicreset(self):
-        for cm in memberlist:
-            sic_reset(cm, self.newname, self.ipadd)
+    def cm_sicreset(self):
+        for x,y in zip(memberlist, self.newmem):
+            sic_reset(x, y, self.ipadd)
 
-    # Update Name/SIC on management side 
-    def apisic(self):
-        api_sic_gw(self.name, self.newname)
+    # Update Cluster Name/SIC on management side 
+    def cl_apisic(self):
+        api_sic_cluster(self.name, self.newname)
 
 
 def end():
@@ -530,6 +647,13 @@ def main():
     elif answer in clusterlist:
         cluster_member_link(answer)
         cl = Cluster(answer)
+        cl.cl_newname()
+        cl.cm_newname()
+        global newlinkedlist
+        newlinkedlist = {}
+        for m in cl.newmem:
+            newlinkedlist.setdefault(cl.newname, []).append(m)
+        print(f"\n[ New Linked List ]\n{newlinkedlist}\n")
         cl.cm_ip()
 
     else:
